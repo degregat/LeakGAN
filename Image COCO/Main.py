@@ -2,6 +2,12 @@ import numpy as np
 import tensorflow as tf
 import random
 from dataloader import Gen_Data_loader, Dis_dataloader
+
+from privacy.analysis import privacy_ledger
+from privacy.analysis.rdp_accountant import compute_rdp_from_ledger
+from privacy.analysis.rdp_accountant import get_privacy_spent
+from privacy.optimizers import dp_optimizer
+
 from Discriminator import Discriminator
 from LeakGANModel import  LeakGAN
 import cPickle
@@ -23,14 +29,29 @@ START_TOKEN = 0
 PRE_EPOCH_NUM = 200 # supervise (maximum likelihood estimation) epochs
 SEED = 88
 BATCH_SIZE = 64
-
+LEARNING_RATE = 0.001
 GOAL_SIZE = 16
 STEP_SIZE = 4
 #########################################################################################
 #  Discriminator  Hyper-parameters
 #########################################################################################
+d_rate = 5e-5
 dis_embedding_dim = 256
 
+#########################################################################################
+#  Worker Pretrain  Differential Privacy Parameters
+#########################################################################################
+worker_pre_l2_norm_clip=10
+worker_pre_noise_multiplier=0.001
+worker_pre_num_microbatches=1
+
+
+#########################################################################################
+#  Discriminator  Differential Privacy Parameters
+#########################################################################################
+dis_l2_norm_clip=10
+dis_noise_multiplier=0.001
+dis_num_microbatches=1
 
 dis_filter_sizes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20,32]
 dis_num_filters = [100, 200, 200, 200, 200, 100, 100, 100, 100, 100, 160, 160,160]
@@ -47,7 +68,14 @@ TOTAL_BATCH = 800
 positive_file = 'save/realtrain_cotra.txt'
 negative_file = 'save/generator_sample.txt'
 generated_num = 10000
+num_examples = generated_num # Size of sample taken from positive_file
 model_path = './ckpts'
+
+#########################################################################################
+#  Differential Privacy Training Parameters
+#########################################################################################
+population_size = num_examples
+delta = 1/population_size
 
 def generate_samples(sess, trainable_model, batch_size, generated_num, output_file,train = 1):
     # Generate Samples
@@ -148,6 +176,21 @@ def get_reward(model,dis, sess, input_x, rollout_num, dis_dropout_keep_prob,tota
     rewards = rewards[0:BATCH_SIZE, :]
     return rewards
 
+def calc_epsilon(delta, ledger, sess):
+        orders = [1 + x / 10. for x in range(1, 100)] + list(range(12, 64))
+        _samples, _queries = ledger.get_unformatted_ledger()
+        print("samples: " + str(_samples.shape))
+        print("queries: " + str(_queries.shape))
+        samples = sess.run(_samples)
+        queries = sess.run(_queries)
+        print("samples: " + str(len(samples)))
+        print("queries: " + str(len(queries)))
+
+        formatted_ledger = privacy_ledger.format_ledger(samples, queries)
+        rdp = compute_rdp_from_ledger(formatted_ledger, orders)
+        epsilon = get_privacy_spent(orders, rdp, target_delta=delta)[0]
+        return(epsilon)
+
 def main():
     random.seed(SEED)
     np.random.seed(SEED)
@@ -155,11 +198,27 @@ def main():
 
     gen_data_loader = Gen_Data_loader(BATCH_SIZE,SEQ_LENGTH)
     vocab_size = 4839
-    dis_data_loader = Dis_dataloader(BATCH_SIZE,SEQ_LENGTH)
-    discriminator = Discriminator(SEQ_LENGTH,num_classes=2,vocab_size=vocab_size,dis_emb_dim=dis_embedding_dim,filter_sizes=dis_filter_sizes,num_filters=dis_num_filters,
-                        batch_size=BATCH_SIZE,hidden_dim=HIDDEN_DIM,start_token=START_TOKEN,goal_out_size=GOAL_OUT_SIZE,step_size=4)
-    leakgan = LeakGAN(SEQ_LENGTH,num_classes=2,vocab_size=vocab_size,emb_dim=EMB_DIM,dis_emb_dim=dis_embedding_dim,filter_sizes=dis_filter_sizes,num_filters=dis_num_filters,
-                        batch_size=BATCH_SIZE,hidden_dim=HIDDEN_DIM,start_token=START_TOKEN,goal_out_size=GOAL_OUT_SIZE,goal_size=GOAL_SIZE,step_size=4,D_model=discriminator)
+    dis_data_loader = Dis_dataloader(BATCH_SIZE,SEQ_LENGTH,num_examples)
+    #discriminator = Discriminator(SEQ_LENGTH,num_classes=2,vocab_size=vocab_size,dis_emb_dim=dis_embedding_dim,filter_sizes=dis_filter_sizes,num_filters=dis_num_filters, batch_size=BATCH_SIZE,hidden_dim=HIDDEN_DIM,start_token=START_TOKEN,goal_out_size=GOAL_OUT_SIZE,step_size=4)
+    #leakgan = LeakGAN(SEQ_LENGTH,num_classes=2,vocab_size=vocab_size,emb_dim=EMB_DIM,dis_emb_dim=dis_embedding_dim,filter_sizes=dis_filter_sizes,num_filters=dis_num_filters, batch_size=BATCH_SIZE,hidden_dim=HIDDEN_DIM,start_token=START_TOKEN,goal_out_size=GOAL_OUT_SIZE,goal_size=GOAL_SIZE,step_size=4,D_model=discriminator)
+
+    discriminator = Discriminator(SEQ_LENGTH,num_classes=2,vocab_size=vocab_size,
+                                  dis_emb_dim=dis_embedding_dim, d_rate=d_rate,
+                                  noise_multiplier=dis_noise_multiplier, l2_norm_clip=dis_l2_norm_clip,
+                                  num_microbatches=dis_num_microbatches,
+                                  population_size=population_size, delta=delta,
+                                  filter_sizes=dis_filter_sizes,num_filters=dis_num_filters,
+                                  batch_size=BATCH_SIZE,hidden_dim=HIDDEN_DIM,start_token=START_TOKEN,
+                                  goal_out_size=GOAL_OUT_SIZE,step_size=4)
+    
+    leakgan = LeakGAN(SEQ_LENGTH,num_classes=2,vocab_size=vocab_size,
+                      emb_dim=EMB_DIM,dis_emb_dim=dis_embedding_dim,
+                      noise_multiplier=worker_pre_noise_multiplier, l2_norm_clip=worker_pre_l2_norm_clip,
+                      num_microbatches=worker_pre_num_microbatches, population_size=population_size, delta=delta, 
+                      filter_sizes=dis_filter_sizes,num_filters=dis_num_filters,
+                      batch_size=BATCH_SIZE,hidden_dim=HIDDEN_DIM,start_token=START_TOKEN,
+                      goal_out_size=GOAL_OUT_SIZE,goal_size=GOAL_SIZE,step_size=4,D_model=discriminator,
+                      learning_rate=LEARNING_RATE)
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -200,6 +259,9 @@ def main():
                         generate_samples(sess, leakgan, BATCH_SIZE, generated_num, negative_file)
                     buffer = 'epoch:\t' + str(epoch) + '\tnll:\t' + str(loss) + '\n'
                     log.write(buffer)
+                    log.write("Pre-train worker: delta: %.5f, noise: %.5f, clip: %.5f, epsilon: %.5f"
+                                          %(delta, worker_pre_noise_multiplier, worker_pre_l2_norm_clip,
+                                            calc_epsilon(delta, leakgan.worker_pre_ledger, sess)))
                 saver.save(sess, model_path + '/leakgan_pre')
         else:
                 print 'Start pre-training discriminator...'
@@ -222,6 +284,9 @@ def main():
                                 # print 'D_loss ', D_loss
                                 buffer =  str(D_loss) + '\n'
                                 log.write(buffer)
+                        log.write("Pre-train discriminator: delta: %.5f, noise: %.5f, clip: %.5f, epsilon: %.5f"
+                                          %(delta, discriminator.noise_multiplier, discriminator.l2_norm_clip,
+                                            calc_epsilon(delta, discriminator.ledger, sess)))
                         leakgan.update_feature_function(discriminator)
                     saver.save(sess, model_path + '/leakgan_preD')
 
@@ -236,6 +301,10 @@ def main():
                         print 'pre-train epoch ', epoch, 'test_loss ', loss
                         buffer = 'epoch:\t'+ str(epoch) + '\tnll:\t' + str(loss) + '\n'
                         log.write(buffer)
+                        log.write("Pre-train worker: delta: %.5f, noise: %.5f, clip: %.5f, epsilon: %.5f"
+                                          %(delta, worker_pre_noise_multiplier, worker_pre_l2_norm_clip,
+                                            calc_epsilon(delta, leakgan.worker_pre_ledger, sess)))
+
                 saver.save(sess, model_path + '/leakgan_pre')
 
     gencircle = 1
@@ -277,6 +346,9 @@ def main():
                     }
                     D_loss, _ = sess.run([discriminator.D_loss, discriminator.D_train_op], feed)
                     # print 'D_loss ', D_loss
+            log.write("Discriminator: delta: %.5f, noise: %.5f, clip: %.5f, epsilon: %.5f"
+                      %(delta, dis_noise_multiplier, dis_pre_l2_norm_clip,
+                        calc_epsilon(delta, discriminator.ledger, sess)))
             leakgan.update_feature_function(discriminator)
     log.close()
 

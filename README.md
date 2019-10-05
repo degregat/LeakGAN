@@ -1,4 +1,18 @@
-﻿# LeakGAN
+﻿# Differentially Private LeakGAN
+In this fork, the Discriminator and the Worker of the pretraining phase are made Differentially Private in the Image COCO experiment. The DP parameters can be set at the top of Main.py. This is an untested work in progress.
+
+## Requirements
+* **Tensorflow r1.2.1**
+* Python 2.7
+* CUDA 7.5+ (For GPU)
+* [TensorFlow Privacy](https://github.com/tensorflow/privacy/)
+
+## Open Problems
+
+- What is the privacy of the whole system?
+- Use [Adaptive Laplacian Mechanism](https://github.com/haiphanNJIT/PrivateDeepLearning/tree/master/AdLM) to privacy budget consumption independent of training steps
+
+# LeakGAN
 The code of research paper [Long Text Generation via Adversarial Training with Leaked Information](https://arxiv.org/abs/1709.08624). 
 
 This paper has been accepted at the Thirty-Second AAAI Conference on Artificial Intelligence ([AAAI-18](https://aaai.org/Conferences/AAAI-18/)).

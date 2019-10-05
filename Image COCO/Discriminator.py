@@ -2,6 +2,9 @@ import tensorflow as tf
 import  numpy as np
 from tensorflow.python.ops import tensor_array_ops, control_flow_ops
 
+from privacy.analysis import privacy_ledger
+from privacy.optimizers import dp_optimizer
+
 def cosine_similarity(a,b):
     normalize_a = tf.nn.l2_normalize(a, -1)
     normalize_b = tf.nn.l2_normalize(b, -1)
@@ -57,7 +60,10 @@ def highway(input_, size, num_layers=1, bias=-2.0, f=tf.nn.relu, scope='Highway'
     return output
 
 class Discriminator(object):
-    def __init__(self, sequence_length, num_classes, vocab_size,dis_emb_dim,filter_sizes, num_filters,batch_size,hidden_dim, start_token,goal_out_size,step_size,l2_reg_lambda=0.0):
+    def __init__(self, sequence_length, num_classes, vocab_size,dis_emb_dim,
+                 d_rate, noise_multiplier, l2_norm_clip, population_size, delta, num_microbatches,
+                 filter_sizes, num_filters,batch_size,hidden_dim,
+                 start_token,goal_out_size,step_size, l2_reg_lambda=0.0):
         self.sequence_length = sequence_length
         self.num_classes = num_classes
         self.vocab_size = vocab_size
@@ -70,7 +76,7 @@ class Discriminator(object):
         self.l2_reg_lambda = l2_reg_lambda
         self.num_filters_total = sum(self.num_filters)
         self.temperature = 1.0
-        self.grad_clip = 5.0
+        self.grad_clip = 5.0 #Does not apply to d_optimizer
         self.goal_out_size = goal_out_size
         self.step_size = step_size
 
@@ -78,6 +84,14 @@ class Discriminator(object):
         self.D_input_x = tf.placeholder(tf.int32, [None, sequence_length], name="input_x")
         self.dropout_keep_prob = tf.placeholder(tf.float32, name="dropout_keep_prob")
 
+
+        self.d_rate=d_rate
+        self.l2_norm_clip=l2_norm_clip
+        self.noise_multiplier=noise_multiplier
+        self.num_microbatches=num_microbatches
+        self.population_size=population_size
+        self.delta=delta
+        
         with tf.name_scope('D_update'):
             self.D_l2_loss = tf.constant(0.0)
             self.FeatureExtractor_unit = self.FeatureExtractor()
@@ -94,7 +108,18 @@ class Discriminator(object):
 
             self.D_params = [param for param in tf.trainable_variables() if
                              'Discriminator' or 'FeatureExtractor' in param.name]
-            d_optimizer = tf.train.AdamOptimizer(5e-5)
+
+            self.ledger = privacy_ledger.PrivacyLedger(
+                population_size = self.population_size,
+                selection_probability = (self.batch_size / self.population_size))
+
+            d_optimizer = dp_optimizer.DPAdamGaussianOptimizer(
+                l2_norm_clip=self.l2_norm_clip,
+                noise_multiplier=self.noise_multiplier,
+                num_microbatches=self.num_microbatches,
+                ledger=self.ledger,
+                learning_rate=self.d_rate)
+            
             D_grads_and_vars = d_optimizer.compute_gradients(self.D_loss, self.D_params, aggregation_method=2)
             self.D_train_op = d_optimizer.apply_gradients(D_grads_and_vars)
 
