@@ -32,7 +32,7 @@ class Gen_Data_loader():
 
 
 class Dis_dataloader():
-    def __init__(self, batch_size,length):
+    def __init__(self, batch_size,length, examples):
         self.batch_size = batch_size
         self.sentences = np.array([])
         self.labels = np.array([])
@@ -54,7 +54,7 @@ class Dis_dataloader():
                 parse_line = [int(x) for x in line]
                 if len(parse_line) == self.length:
                     negative_examples.append(parse_line)
-        positive_examples = random.sample(positive_examples, 10000)
+        positive_examples = random.sample(positive_examples, examples)
         self.sentences = np.array(positive_examples + negative_examples)
 
         # Generate labels

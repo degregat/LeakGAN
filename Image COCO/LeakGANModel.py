@@ -2,15 +2,27 @@ import tensorflow as tf
 import  numpy as np
 from tensorflow.python.ops import tensor_array_ops, control_flow_ops
 
+from privacy.analysis import privacy_ledger
+from privacy.optimizers import dp_optimizer
+
 class LeakGAN(object):
-    def __init__(self, sequence_length, num_classes, vocab_size,
-            emb_dim, dis_emb_dim,filter_sizes, num_filters,batch_size,hidden_dim, start_token,goal_out_size,
-                 goal_size,step_size,D_model,LSTMlayer_num=1, l2_reg_lambda=0.0,learning_rate=0.001):
+    def __init__(self, sequence_length, num_classes, vocab_size, emb_dim, dis_emb_dim,
+                 noise_multiplier, l2_norm_clip, population_size, delta, num_microbatches,
+                 filter_sizes, num_filters,batch_size,hidden_dim,
+                 start_token,goal_out_size, goal_size,step_size,
+                 D_model,LSTMlayer_num=1, l2_reg_lambda=0.0,learning_rate=0.001):
         self.sequence_length = sequence_length
         self.num_classes = num_classes
         self.vocab_size = vocab_size
         self.emb_dim = emb_dim
         self.dis_emb_dim = dis_emb_dim
+
+        self.noise_multiplier = noise_multiplier
+        self.l2_norm_clip = l2_norm_clip
+        self.population_size = population_size
+        self.delta=delta
+        self.num_microbatches = num_microbatches
+        
         self.filter_sizes = filter_sizes
         self.num_filters = num_filters
         self.batch_size = batch_size
@@ -254,7 +266,16 @@ class LeakGAN(object):
 
         with tf.name_scope("Worker_PreTrain_update"):
             # training updates
-            pretrain_worker_opt = tf.train.AdamOptimizer(self.learning_rate)
+            self.worker_pre_ledger = privacy_ledger.PrivacyLedger(
+                population_size = self.population_size,
+                selection_probability = (self.batch_size / self.population_size))
+
+            pretrain_worker_opt = dp_optimizer.DPAdamGaussianOptimizer(
+                l2_norm_clip=self.l2_norm_clip,
+                noise_multiplier=self.noise_multiplier,
+                num_microbatches=self.num_microbatches,
+                ledger=self.worker_pre_ledger,
+                learning_rate=self.learning_rate)
 
             self.pretrain_worker_grad, _ = tf.clip_by_global_norm(tf.gradients(self.pretrain_worker_loss, self.worker_params), self.grad_clip)
             self.pretrain_worker_updates = pretrain_worker_opt.apply_gradients(zip(self.pretrain_worker_grad, self.worker_params))
