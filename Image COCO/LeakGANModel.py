@@ -17,6 +17,7 @@ class LeakGAN(object):
         self.emb_dim = emb_dim
         self.dis_emb_dim = dis_emb_dim
 
+        # differential privacy parameters for pre-train Worker
         self.noise_multiplier = noise_multiplier
         self.l2_norm_clip = l2_norm_clip
         self.population_size = population_size
@@ -266,6 +267,8 @@ class LeakGAN(object):
 
         with tf.name_scope("Worker_PreTrain_update"):
             # training updates
+
+            # privacy ledger and differentially private optimizer for pre-train Worker
             self.worker_pre_ledger = privacy_ledger.PrivacyLedger(
                 population_size = self.population_size,
                 selection_probability = (self.batch_size / self.population_size))

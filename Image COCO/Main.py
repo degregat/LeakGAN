@@ -38,20 +38,6 @@ STEP_SIZE = 4
 d_rate = 5e-5
 dis_embedding_dim = 256
 
-#########################################################################################
-#  Worker Pretrain  Differential Privacy Parameters
-#########################################################################################
-worker_pre_l2_norm_clip=10
-worker_pre_noise_multiplier=0.001
-worker_pre_num_microbatches=1
-
-
-#########################################################################################
-#  Discriminator  Differential Privacy Parameters
-#########################################################################################
-dis_l2_norm_clip=10
-dis_noise_multiplier=0.001
-dis_num_microbatches=1
 
 dis_filter_sizes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20,32]
 dis_num_filters = [100, 200, 200, 200, 200, 100, 100, 100, 100, 100, 160, 160,160]
@@ -72,10 +58,27 @@ num_examples = generated_num # Size of sample taken from positive_file
 model_path = './ckpts'
 
 #########################################################################################
+#  Worker Pretrain Differential Privacy Parameters
+#########################################################################################
+# On setting DP parameters:
+# https://github.com/tensorflow/privacy/blob/master/tutorials/README.md
+
+worker_pre_l2_norm_clip=10
+worker_pre_noise_multiplier=0.001
+worker_pre_num_microbatches=1
+
+#########################################################################################
+#  Discriminator Differential Privacy Parameters
+#########################################################################################
+dis_l2_norm_clip=10
+dis_noise_multiplier=0.001
+dis_num_microbatches=1
+
+#########################################################################################
 #  Differential Privacy Training Parameters
 #########################################################################################
 population_size = num_examples
-delta = 1/population_size
+delta = 1/(population_size+1) # Should be less than the inverse of population_size
 
 def generate_samples(sess, trainable_model, batch_size, generated_num, output_file,train = 1):
     # Generate Samples
@@ -176,20 +179,22 @@ def get_reward(model,dis, sess, input_x, rollout_num, dis_dropout_keep_prob,tota
     rewards = rewards[0:BATCH_SIZE, :]
     return rewards
 
+# Calculate epsilon from a given ledger
 def calc_epsilon(delta, ledger, sess):
-        orders = [1 + x / 10. for x in range(1, 100)] + list(range(12, 64))
-        _samples, _queries = ledger.get_unformatted_ledger()
-        print("samples: " + str(_samples.shape))
-        print("queries: " + str(_queries.shape))
-        samples = sess.run(_samples)
-        queries = sess.run(_queries)
-        print("samples: " + str(len(samples)))
-        print("queries: " + str(len(queries)))
-
-        formatted_ledger = privacy_ledger.format_ledger(samples, queries)
-        rdp = compute_rdp_from_ledger(formatted_ledger, orders)
-        epsilon = get_privacy_spent(orders, rdp, target_delta=delta)[0]
-        return(epsilon)
+    orders = [1 + x / 10. for x in range(1, 100)] + list(range(12, 64))
+    # More on orders: https://github.com/tensorflow/privacy/blob/master/tutorials/walkthrough/walkthrough.md
+    _samples, _queries = ledger.get_unformatted_ledger()
+    print("samples: " + str(_samples.shape))
+    print("queries: " + str(_queries.shape))
+    samples = sess.run(_samples)
+    queries = sess.run(_queries)
+    print("samples: " + str(len(samples)))
+    print("queries: " + str(len(queries)))
+    
+    formatted_ledger = privacy_ledger.format_ledger(samples, queries)
+    rdp = compute_rdp_from_ledger(formatted_ledger, orders)
+    epsilon = get_privacy_spent(orders, rdp, target_delta=delta)[0]
+    return(epsilon)
 
 def main():
     random.seed(SEED)
@@ -257,6 +262,7 @@ def main():
                         generate_samples(sess, leakgan, BATCH_SIZE, generated_num, negative_file)
                     buffer = 'epoch:\t' + str(epoch) + '\tnll:\t' + str(loss) + '\n'
                     log.write(buffer)
+                    # log DP parameters and resulting epsilon
                     log.write("Pre-train worker: delta: %.5f, noise: %.5f, clip: %.5f, epsilon: %.5f"
                                           %(delta, worker_pre_noise_multiplier, worker_pre_l2_norm_clip,
                                             calc_epsilon(delta, leakgan.worker_pre_ledger, sess)))
@@ -282,6 +288,7 @@ def main():
                                 # print 'D_loss ', D_loss
                                 buffer =  str(D_loss) + '\n'
                                 log.write(buffer)
+                        # log DP parameters and resulting epsilon
                         log.write("Pre-train discriminator: delta: %.5f, noise: %.5f, clip: %.5f, epsilon: %.5f"
                                           %(delta, discriminator.noise_multiplier, discriminator.l2_norm_clip,
                                             calc_epsilon(delta, discriminator.ledger, sess)))
@@ -299,6 +306,7 @@ def main():
                         print 'pre-train epoch ', epoch, 'test_loss ', loss
                         buffer = 'epoch:\t'+ str(epoch) + '\tnll:\t' + str(loss) + '\n'
                         log.write(buffer)
+                        # log DP parameters and resulting epsilon
                         log.write("Pre-train worker: delta: %.5f, noise: %.5f, clip: %.5f, epsilon: %.5f"
                                           %(delta, worker_pre_noise_multiplier, worker_pre_l2_norm_clip,
                                             calc_epsilon(delta, leakgan.worker_pre_ledger, sess)))
@@ -344,6 +352,7 @@ def main():
                     }
                     D_loss, _ = sess.run([discriminator.D_loss, discriminator.D_train_op], feed)
                     # print 'D_loss ', D_loss
+            # log DP parameters and resulting epsilon
             log.write("Discriminator: delta: %.5f, noise: %.5f, clip: %.5f, epsilon: %.5f"
                       %(delta, dis_noise_multiplier, dis_pre_l2_norm_clip,
                         calc_epsilon(delta, discriminator.ledger, sess)))

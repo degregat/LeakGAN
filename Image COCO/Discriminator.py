@@ -84,7 +84,7 @@ class Discriminator(object):
         self.D_input_x = tf.placeholder(tf.int32, [None, sequence_length], name="input_x")
         self.dropout_keep_prob = tf.placeholder(tf.float32, name="dropout_keep_prob")
 
-
+        # differential privacy parameters for Discriminator
         self.d_rate=d_rate
         self.l2_norm_clip=l2_norm_clip
         self.noise_multiplier=noise_multiplier
@@ -109,6 +109,7 @@ class Discriminator(object):
             self.D_params = [param for param in tf.trainable_variables() if
                              'Discriminator' or 'FeatureExtractor' in param.name]
 
+            # privacy ledger and differentially private optimizer for Discriminator
             self.ledger = privacy_ledger.PrivacyLedger(
                 population_size = self.population_size,
                 selection_probability = (self.batch_size / self.population_size))
