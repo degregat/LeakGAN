@@ -6,6 +6,8 @@ For more information on how to set them, see the [tutorial](https://github.com/t
 
 A similar approach to [Differentially Private Generative Adversarial Network](https://arxiv.org/abs/1802.06739) was used. Additionally, since the Worker uses real data during the pre-training, it was made differentially private in this phase as well.
 
+**ATTENTION: This is an untested work in progress!** 
+
 ## Requirements
 * **Tensorflow r1.2.1**
 * Python 2.7
